@@ -10,11 +10,12 @@ import {
   ForkSeq,
   SLOTS_PER_EPOCH,
   isForkPostElectra,
+  isForkPostGloas,
 } from "@lodestar/params";
 import {
-  EpochCacheError,
-  EpochCacheErrorCode,
   EpochShuffling,
+  ShufflingError,
+  ShufflingErrorCode,
   SingleSignatureSet,
   computeEpochAtSlot,
   computeSigningRoot,
@@ -224,7 +225,7 @@ export async function validateApiAttestation(
       code: AttestationErrorCode.INVALID_SIGNATURE,
     });
   } catch (err) {
-    if (err instanceof EpochCacheError && err.type.code === EpochCacheErrorCode.COMMITTEE_INDEX_OUT_OF_RANGE) {
+    if (err instanceof ShufflingError && err.type.code === ShufflingErrorCode.COMMITTEE_INDEX_OUT_OF_RANGE) {
       throw new AttestationError(GossipAction.IGNORE, {
         code: AttestationErrorCode.BAD_TARGET_EPOCH,
       });
@@ -293,9 +294,29 @@ async function validateAttestationNoSignatureCheck(
       // api or first time validation of a gossip attestation
       committeeIndex = attestationOrCache.attestation.committeeIndex;
 
-      // [REJECT] attestation.data.index == 0
-      if (attData.index !== 0) {
-        throw new AttestationError(GossipAction.REJECT, {code: AttestationErrorCode.NON_ZERO_ATTESTATION_DATA_INDEX});
+      if (isForkPostGloas(fork)) {
+        // [REJECT] `attestation.data.index < 2`.
+        if (attData.index >= 2) {
+          throw new AttestationError(GossipAction.REJECT, {
+            code: AttestationErrorCode.INVALID_PAYLOAD_STATUS_VALUE,
+            attDataIndex: attData.index,
+          });
+        }
+
+        // [REJECT] `attestation.data.index == 0` if `block.slot == attestation.data.slot`.
+        const block = chain.forkChoice.getBlock(attData.beaconBlockRoot);
+
+        // block being null will be handled by `verifyHeadBlockAndTargetRoot`
+        if (block !== null && block.slot === attSlot && attData.index !== 0) {
+          throw new AttestationError(GossipAction.REJECT, {
+            code: AttestationErrorCode.PREMATURELY_INDICATED_PAYLOAD_PRESENT,
+          });
+        }
+      } else {
+        // [REJECT] attestation.data.index == 0
+        if (attData.index !== 0) {
+          throw new AttestationError(GossipAction.REJECT, {code: AttestationErrorCode.NON_ZERO_ATTESTATION_DATA_INDEX});
+        }
       }
     } else {
       // phase0 attestation

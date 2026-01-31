@@ -124,7 +124,7 @@ export async function validateGossipBlobSidecar(
   // [IGNORE] The block's parent (defined by block.parent_root) has been seen (via both gossip and non-gossip sources) (a client MAY queue blocks for processing once the parent block is retrieved).
   // [REJECT] The block's parent (defined by block.parent_root) passes validation.
   const blockState = await chain.regen
-    .getBlockSlotState(parentRoot, blobSlot, {dontTransferCache: true}, RegenCaller.validateGossipBlock)
+    .getBlockSlotState(parentBlock, blobSlot, {dontTransferCache: true}, RegenCaller.validateGossipBlock)
     .catch(() => {
       throw new BlobSidecarGossipError(GossipAction.IGNORE, {
         code: BlobSidecarErrorCode.PARENT_UNKNOWN,
@@ -137,7 +137,12 @@ export async function validateGossipBlobSidecar(
   // [REJECT] The proposer signature, signed_beacon_block.signature, is valid with respect to the proposer_index pubkey.
   const signature = blobSidecar.signedBlockHeader.signature;
   if (!chain.seenBlockInputCache.isVerifiedProposerSignature(blobSlot, blockHex, signature)) {
-    const signatureSet = getBlockHeaderProposerSignatureSetByParentStateSlot(blockState, blobSidecar.signedBlockHeader);
+    const signatureSet = getBlockHeaderProposerSignatureSetByParentStateSlot(
+      chain.config,
+      chain.index2pubkey,
+      blockState.slot,
+      blobSidecar.signedBlockHeader
+    );
     // Don't batch so verification is not delayed
     if (!(await chain.bls.verifySignatureSets([signatureSet], {verifyOnMainThread: true}))) {
       throw new BlobSidecarGossipError(GossipAction.REJECT, {
@@ -239,8 +244,11 @@ export async function validateBlockBlobSidecars(
     const blockRootHex = toRootHex(blockRoot);
     const signature = firstSidecarSignedBlockHeader.signature;
     if (!chain.seenBlockInputCache.isVerifiedProposerSignature(blockSlot, blockRootHex, signature)) {
-      const headState = await chain.getHeadState();
-      const signatureSet = getBlockHeaderProposerSignatureSetByHeaderSlot(headState, firstSidecarSignedBlockHeader);
+      const signatureSet = getBlockHeaderProposerSignatureSetByHeaderSlot(
+        chain.config,
+        chain.index2pubkey,
+        firstSidecarSignedBlockHeader
+      );
 
       if (
         !(await chain.bls.verifySignatureSets([signatureSet], {
